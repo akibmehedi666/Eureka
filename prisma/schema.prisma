@@ -1,0 +1,198 @@
+// schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum PaperStatus {
+  TO_READ
+  READING
+  DONE
+  REFERENCE
+}
+
+enum WorkspaceRole {
+  OWNER
+  MEMBER
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  avatarUrl    String?
+  bio          String?
+  focusArea    String?
+  createdAt    DateTime @default(now())
+  lastActiveAt          DateTime @default(now())
+  lastActiveWorkspaceId String?
+  lastActiveWorkspace   Workspace? @relation("LastActiveWorkspace", fields: [lastActiveWorkspaceId], references: [id])
+
+  memberships    WorkspaceMember[]
+  papersAdded    Paper[]           @relation("PapersAdded")
+  papersAssigned Paper[]           @relation("PapersAssigned")
+  notes          Note[]
+  comments       Comment[]
+  activities     Activity[]
+  invitesSent    WorkspaceInvite[] @relation("InvitesSent")
+}
+
+model Workspace {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+
+  members         WorkspaceMember[]
+  papers          Paper[]
+  tags            Tag[]
+  invites         WorkspaceInvite[]
+  activities      Activity[]
+  lastActiveUsers User[]            @relation("LastActiveWorkspace")
+}
+
+model WorkspaceInvite {
+  id         String        @id @default(uuid())
+  token      String        @unique
+  email      String
+  role       WorkspaceRole @default(MEMBER)
+  createdAt  DateTime      @default(now())
+  acceptedAt DateTime?
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  workspaceId String
+  invitedBy   User?     @relation("InvitesSent", fields: [invitedById], references: [id])
+  invitedById String?
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([invitedById])
+}
+
+model WorkspaceMember {
+  id       String        @id @default(uuid())
+  role     WorkspaceRole @default(MEMBER)
+  joinedAt DateTime      @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+  userId      String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  workspaceId String
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+model Paper {
+  id        String      @id @default(uuid())
+  title     String
+  authors   String
+  year      Int?
+  sourceUrl String?
+  fileUrl   String?
+  status    PaperStatus @default(TO_READ)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  workspaceId String
+
+  addedBy   User   @relation("PapersAdded", fields: [addedById], references: [id])
+  addedById String
+
+  assignedTo   User?   @relation("PapersAssigned", fields: [assignedToId], references: [id])
+  assignedToId String?
+
+  tags       PaperTag[]
+  notes      Note[]
+  comments   Comment[]
+  activities Activity[]
+
+  @@index([workspaceId])
+  @@index([addedById])
+  @@index([assignedToId])
+  @@index([status])
+  @@index([workspaceId, status])    // composite: status-filter queries on a workspace
+  @@index([workspaceId, createdAt]) // composite: recency-sorted paper list per workspace
+}
+
+model Note {
+  id            String   @id @default(uuid())
+  summary       String?
+  keyFindings   String?
+  openQuestions String?
+  relevance     String?
+  freeform      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  paper    Paper  @relation(fields: [paperId], references: [id])
+  paperId  String
+  author   User   @relation(fields: [authorId], references: [id])
+  authorId String
+
+  @@index([paperId])
+  @@index([authorId])
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  paper    Paper  @relation(fields: [paperId], references: [id])
+  paperId  String
+  author   User   @relation(fields: [authorId], references: [id])
+  authorId String
+
+  @@index([paperId])
+  @@index([authorId])
+}
+
+model Tag {
+  id   String @id @default(uuid())
+  name String
+
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id])
+  workspaceId String
+  papers      PaperTag[]
+
+  @@unique([name, workspaceId])
+  @@index([workspaceId])
+}
+
+model PaperTag {
+  paper   Paper  @relation(fields: [paperId], references: [id])
+  paperId String
+  tag     Tag    @relation(fields: [tagId], references: [id])
+  tagId   String
+
+  @@id([paperId, tagId])
+  @@index([tagId])
+}
+
+// Feed of who-did-what, powers the Activity dashboard
+model Activity {
+  id        String   @id @default(uuid())
+  type      String // e.g. "PAPER_ADDED", "NOTE_ADDED", "COMMENT_ADDED", "STATUS_CHANGED"
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+  userId      String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  workspaceId String
+  paper       Paper?    @relation(fields: [paperId], references: [id])
+  paperId     String?
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([paperId])
+  @@index([workspaceId, createdAt]) // composite: time-ordered activity feed per workspace
+}
